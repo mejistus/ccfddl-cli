@@ -1,0 +1,519 @@
+[
+  {
+    "title": "ROUNDS",
+    "description": "Synthetic fixture: two distinct rounds, comments preserved",
+    "sub": "AI",
+    "rank": {
+      "ccf": "B",
+      "core": "A",
+      "thcpl": "B"
+    },
+    "dblp": "rounds",
+    "conference_key": "AI/rounds",
+    "confs": [
+      {
+        "year": 2028,
+        "id": "rounds28",
+        "timeline": [
+          {
+            "abstract_deadline": "2033-04-15 23:59:59",
+            "deadline": "2033-05-01 23:59:59",
+            "comment": "Round 1"
+          },
+          {
+            "deadline": "2033-08-01 23:59:59",
+            "comment": "Round 2"
+          }
+        ],
+        "timezone": "UTC+0",
+        "date": "May 2033",
+        "place": "Rounds City",
+        "link": "https://example.invalid/rounds"
+      }
+    ]
+  },
+  {
+    "title": "ABSDUO",
+    "description": "Synthetic fixture: both abstract and paper deadlines dated",
+    "sub": "AI",
+    "rank": {
+      "ccf": "N",
+      "core": "N",
+      "thcpl": "N"
+    },
+    "dblp": "absduo",
+    "conference_key": "AI/absduo",
+    "confs": [
+      {
+        "year": 2029,
+        "id": "absduo29",
+        "timeline": [
+          {
+            "abstract_deadline": "2033-05-20 23:59:59",
+            "deadline": "2033-05-25 23:59:59"
+          }
+        ],
+        "timezone": "UTC-12",
+        "date": "May 2033",
+        "place": "Absduo City",
+        "link": "https://example.invalid/absduo"
+      }
+    ]
+  },
+  {
+    "title": "ALLKINDS",
+    "description": "Synthetic fixture: paper/abstract/rebuttal/decision nodes",
+    "sub": "AI",
+    "rank": {
+      "ccf": "N",
+      "core": "N",
+      "thcpl": "N"
+    },
+    "dblp": "allkinds",
+    "conference_key": "AI/allkinds",
+    "confs": [
+      {
+        "year": 2033,
+        "id": "allkinds33",
+        "timeline": [
+          {
+            "abstract_deadline": "2033-06-01 23:59:59",
+            "deadline": "2033-06-10 23:59:59",
+            "rebuttal_deadline": "2033-08-01 23:59:59",
+            "decision_deadline": "2033-09-01 23:59:59",
+            "comment": "Main track"
+          }
+        ],
+        "timezone": "UTC+0",
+        "date": "June 2033",
+        "place": "Allkinds City",
+        "link": "https://example.invalid/allkinds"
+      }
+    ]
+  },
+  {
+    "title": "TBDED",
+    "description": "Synthetic fixture: latest edition paper deadline literally TBD",
+    "sub": "AI",
+    "rank": {
+      "ccf": "N",
+      "core": "N",
+      "thcpl": "N"
+    },
+    "dblp": "tbded",
+    "conference_key": "AI/tbded",
+    "confs": [
+      {
+        "year": 2028,
+        "id": "tbded28",
+        "timeline": [
+          {
+            "deadline": "TBD"
+          }
+        ],
+        "timezone": "AoE",
+        "date": "July 2028",
+        "place": "TBD",
+        "link": "https://example.invalid/tbded"
+      }
+    ]
+  },
+  {
+    "title": "TBDABS",
+    "description": "Synthetic fixture: abstract TBD but paper deadline dated",
+    "sub": "AI",
+    "rank": {
+      "ccf": "N",
+      "core": "N",
+      "thcpl": "N"
+    },
+    "dblp": "tbdabs",
+    "conference_key": "AI/tbdabs",
+    "confs": [
+      {
+        "year": 2029,
+        "id": "tbdabs29",
+        "timeline": [
+          {
+            "abstract_deadline": "TBD",
+            "deadline": "2033-06-01 23:59:59"
+          }
+        ],
+        "timezone": "AoE",
+        "date": "June 2033",
+        "place": "Tbdabs City",
+        "link": "https://example.invalid/tbdabs"
+      }
+    ]
+  },
+  {
+    "title": "ABSTBD2",
+    "description": "Synthetic fixture: paper deadline TBD but abstract dated -> TBD section, never a paper row",
+    "sub": "AI",
+    "rank": {
+      "ccf": "N",
+      "core": "N",
+      "thcpl": "N"
+    },
+    "dblp": "abstbd2",
+    "conference_key": "AI/abstbd2",
+    "confs": [
+      {
+        "year": 2029,
+        "id": "abstbd29",
+        "timeline": [
+          {
+            "abstract_deadline": "2033-06-05 23:59:59",
+            "deadline": "TBD"
+          }
+        ],
+        "timezone": "AoE",
+        "date": "June 2029",
+        "place": "Abstbd City",
+        "link": "https://example.invalid/abstbd2"
+      }
+    ]
+  },
+  {
+    "title": "PASSED",
+    "description": "Synthetic fixture: latest edition deadline already PASSED -> not TBD",
+    "sub": "AI",
+    "rank": {
+      "ccf": "N",
+      "core": "N",
+      "thcpl": "N"
+    },
+    "dblp": "passed",
+    "conference_key": "AI/passed",
+    "confs": [
+      {
+        "year": 2026,
+        "id": "passed26",
+        "timeline": [
+          {
+            "deadline": "2020-01-01 23:59:59"
+          }
+        ],
+        "timezone": "UTC-12",
+        "date": "January 2020",
+        "place": "Passed City",
+        "link": "https://example.invalid/passed"
+      }
+    ]
+  },
+  {
+    "title": "OLDTBD",
+    "description": "Synthetic fixture: latest edition year below current display year -> not TBD",
+    "sub": "AI",
+    "rank": {
+      "ccf": "N",
+      "core": "N",
+      "thcpl": "N"
+    },
+    "dblp": "oldtbd",
+    "conference_key": "AI/oldtbd",
+    "confs": [
+      {
+        "year": 2025,
+        "id": "oldtbd25",
+        "timeline": [
+          {
+            "deadline": "TBD"
+          }
+        ],
+        "timezone": "AoE",
+        "date": "July 2025",
+        "place": "Old TBD City",
+        "link": "https://example.invalid/oldtbd"
+      }
+    ]
+  },
+  {
+    "title": "SAMENAME",
+    "description": "Synthetic fixture: duplicate title across areas (AI)",
+    "sub": "AI",
+    "rank": {
+      "ccf": "A",
+      "core": "A*",
+      "thcpl": "A"
+    },
+    "dblp": "samenameai",
+    "conference_key": "AI/same-name-ai",
+    "confs": [
+      {
+        "year": 2030,
+        "id": "snameai30",
+        "timeline": [
+          {
+            "deadline": "2033-04-01 23:59:59"
+          }
+        ],
+        "timezone": "UTC+0",
+        "date": "April 2033",
+        "place": "Same Name AI City",
+        "link": "https://example.invalid/same-name-ai"
+      }
+    ]
+  },
+  {
+    "title": "SAMENAME",
+    "description": "Synthetic fixture: duplicate title across areas (CG)",
+    "sub": "CG",
+    "rank": {
+      "ccf": "B",
+      "core": "B",
+      "thcpl": "B"
+    },
+    "dblp": "samenamecg",
+    "conference_key": "CG/same-name-cg",
+    "confs": [
+      {
+        "year": 2030,
+        "id": "snamecg30",
+        "timeline": [
+          {
+            "deadline": "2033-04-02 23:59:59"
+          }
+        ],
+        "timezone": "UTC+0",
+        "date": "April 2033",
+        "place": "Same Name CG City",
+        "link": "https://example.invalid/same-name-cg"
+      }
+    ]
+  },
+  {
+    "title": "MISSINGRANKS",
+    "description": "Synthetic fixture: rank has only ccf (core/thcpl missing)",
+    "sub": "AI",
+    "rank": {
+      "ccf": "B"
+    },
+    "dblp": "missingranks",
+    "conference_key": "AI/missingranks",
+    "confs": [
+      {
+        "year": 2031,
+        "id": "mrank31",
+        "timeline": [
+          {
+            "deadline": "2033-04-03 23:59:59"
+          }
+        ],
+        "timezone": "UTC+0",
+        "date": "April 2033",
+        "place": "Missing Ranks City",
+        "link": "https://example.invalid/missingranks"
+      }
+    ]
+  },
+  {
+    "title": "NORANK",
+    "description": "Synthetic fixture: rank object empty -> rank must never be invented",
+    "sub": "AI",
+    "rank": {},
+    "dblp": "norank",
+    "conference_key": "AI/norank",
+    "confs": [
+      {
+        "year": 2031,
+        "id": "norank31",
+        "timeline": [
+          {
+            "deadline": "2033-04-04 23:59:59"
+          }
+        ],
+        "timezone": "UTC+0",
+        "date": "April 2033",
+        "place": "No Rank City",
+        "link": "https://example.invalid/norank"
+      }
+    ]
+  },
+  {
+    "title": "UNKNOWNTZ",
+    "description": "Synthetic fixture: unknown source timezone must be skipped, never treated as local",
+    "sub": "AI",
+    "rank": {
+      "ccf": "N",
+      "core": "N",
+      "thcpl": "N"
+    },
+    "dblp": "unknowntz",
+    "conference_key": "AI/unknown-tz",
+    "confs": [
+      {
+        "year": 2033,
+        "id": "unk33",
+        "timeline": [
+          {
+            "deadline": "2033-05-01 12:00:00"
+          }
+        ],
+        "timezone": "MARS",
+        "date": "May 2033",
+        "place": "Unknown TZ City",
+        "link": "https://example.invalid/unknown-tz"
+      }
+    ]
+  },
+  {
+    "title": "DUPE",
+    "description": "Synthetic fixture: exact duplicate timeline entry must collapse to one row",
+    "sub": "AI",
+    "rank": {
+      "ccf": "N",
+      "core": "N",
+      "thcpl": "N"
+    },
+    "dblp": "dupe",
+    "conference_key": "AI/dupe",
+    "confs": [
+      {
+        "year": 2032,
+        "id": "dupe32",
+        "timeline": [
+          {
+            "deadline": "2033-05-10 23:59:59",
+            "comment": "Dup"
+          },
+          {
+            "deadline": "2033-05-10 23:59:59",
+            "comment": "Dup"
+          }
+        ],
+        "timezone": "UTC+0",
+        "date": "May 2033",
+        "place": "Dupe City",
+        "link": "https://example.invalid/dupe"
+      }
+    ]
+  },
+  {
+    "title": "DETAILV",
+    "description": "Synthetic DETAILV workshop on verification methodology (details view)",
+    "sub": "AI",
+    "rank": {
+      "ccf": "B",
+      "core": "A",
+      "thcpl": "B"
+    },
+    "dblp": "detailv",
+    "conference_key": "AI/detailv",
+    "confs": [
+      {
+        "year": 2033,
+        "id": "detailv33",
+        "timeline": [
+          {
+            "abstract_deadline": "2020-01-01 23:59:59",
+            "deadline": "2020-01-02 23:59:59",
+            "comment": "Past edition"
+          },
+          {
+            "rebuttal_deadline": "2033-06-15 23:59:59",
+            "decision_deadline": "2033-07-01 23:59:59"
+          }
+        ],
+        "timezone": "UTC+0",
+        "date": "June 2033",
+        "place": "Detail View City",
+        "link": "https://example.invalid/detailv"
+      }
+    ]
+  },
+  {
+    "title": "MULTI",
+    "description": "Synthetic fixture: historical edition ignored, future edition selected",
+    "sub": "AI",
+    "rank": {
+      "ccf": "N",
+      "core": "N",
+      "thcpl": "N"
+    },
+    "dblp": "multi",
+    "conference_key": "AI/multi",
+    "confs": [
+      {
+        "year": 2025,
+        "id": "multi25",
+        "timeline": [
+          {
+            "deadline": "2025-01-01 23:59:59"
+          }
+        ],
+        "timezone": "UTC+0",
+        "date": "January 2025",
+        "place": "Old Multi City",
+        "link": "https://example.invalid/multi"
+      },
+      {
+        "year": 2033,
+        "id": "multi33",
+        "timeline": [
+          {
+            "deadline": "2033-08-01 23:59:59"
+          }
+        ],
+        "timezone": "UTC+0",
+        "date": "August 2033",
+        "place": "Multi City",
+        "link": "https://example.invalid/multi"
+      }
+    ]
+  },
+  {
+    "title": "FREETEXT",
+    "description": "Synthetic fixture: free-text date/place 'TBD', link absent",
+    "sub": "AI",
+    "rank": {
+      "ccf": "N",
+      "core": "N",
+      "thcpl": "N"
+    },
+    "dblp": "freetext",
+    "conference_key": "AI/freetext",
+    "confs": [
+      {
+        "year": 2030,
+        "id": "freetext30",
+        "timeline": [
+          {
+            "deadline": "2033-07-01 23:59:59"
+          }
+        ],
+        "timezone": "UTC+0",
+        "date": "TBD",
+        "place": "TBD"
+      }
+    ]
+  },
+  {
+    "title": "LONGNOTE",
+    "description": "Synthetic fixture: very long comment for Note-column truncation tests",
+    "sub": "AI",
+    "rank": {
+      "ccf": "C",
+      "core": "C",
+      "thcpl": "C"
+    },
+    "dblp": "longnote",
+    "conference_key": "AI/longnote",
+    "confs": [
+      {
+        "year": 2033,
+        "id": "longnote33",
+        "timeline": [
+          {
+            "deadline": "2033-09-01 23:59:59",
+            "comment": "This is a deliberately very long note used to verify that the renderer truncates the Note column with an ellipsis instead of wrapping the table or overflowing the requested terminal width; it should never wrap mid-date and the full value must remain available in --json output."
+          }
+        ],
+        "timezone": "UTC+0",
+        "date": "September 2033",
+        "place": "Long Note City",
+        "link": "https://example.invalid/longnote"
+      }
+    ]
+  }
+]

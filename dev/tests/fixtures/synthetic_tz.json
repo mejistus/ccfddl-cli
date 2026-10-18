@@ -1,0 +1,299 @@
+[
+  {
+    "title": "TZ AOE",
+    "description": "Synthetic timezone fixture: AoE alias = UTC-12",
+    "sub": "AI",
+    "rank": {
+      "ccf": "N",
+      "core": "N",
+      "thcpl": "N"
+    },
+    "dblp": "tzaoe",
+    "conference_key": "AI/tz-aoe",
+    "confs": [
+      {
+        "year": 2033,
+        "id": "tzaoe33",
+        "timeline": [
+          {
+            "deadline": "2033-01-10 23:59:59"
+          }
+        ],
+        "timezone": "AoE",
+        "date": "January 2033",
+        "place": "Testville (AoE)",
+        "link": "https://example.invalid/tz-aoe"
+      }
+    ]
+  },
+  {
+    "title": "TZ UTC-12",
+    "description": "Synthetic timezone fixture: UTC-12 fixed offset (sign trap)",
+    "sub": "AI",
+    "rank": {
+      "ccf": "N",
+      "core": "N",
+      "thcpl": "N"
+    },
+    "dblp": "tzutcm12",
+    "conference_key": "AI/tz-utcm12",
+    "confs": [
+      {
+        "year": 2033,
+        "id": "tzu12-33",
+        "timeline": [
+          {
+            "deadline": "2033-02-10 23:59:59"
+          }
+        ],
+        "timezone": "UTC-12",
+        "date": "February 2033",
+        "place": "Testville (UTC-12)",
+        "link": "https://example.invalid/tz-utcm12"
+      }
+    ]
+  },
+  {
+    "title": "TZ UTC",
+    "description": "Synthetic timezone fixture: bare UTC",
+    "sub": "AI",
+    "rank": {
+      "ccf": "N",
+      "core": "N",
+      "thcpl": "N"
+    },
+    "dblp": "tzutc",
+    "conference_key": "AI/tz-utc",
+    "confs": [
+      {
+        "year": 2033,
+        "id": "tzutc33",
+        "timeline": [
+          {
+            "deadline": "2033-03-10 12:00:00"
+          }
+        ],
+        "timezone": "UTC",
+        "date": "March 2033",
+        "place": "Testville (UTC)",
+        "link": "https://example.invalid/tz-utc"
+      }
+    ]
+  },
+  {
+    "title": "TZ UTC+0",
+    "description": "Synthetic timezone fixture: UTC+0 spelling",
+    "sub": "AI",
+    "rank": {
+      "ccf": "N",
+      "core": "N",
+      "thcpl": "N"
+    },
+    "dblp": "tzutc0",
+    "conference_key": "AI/tz-utc0",
+    "confs": [
+      {
+        "year": 2033,
+        "id": "tzutc0-33",
+        "timeline": [
+          {
+            "deadline": "2033-03-10 12:00:00"
+          }
+        ],
+        "timezone": "UTC+0",
+        "date": "March 2033",
+        "place": "Testville (UTC+0)",
+        "link": "https://example.invalid/tz-utc0"
+      }
+    ]
+  },
+  {
+    "title": "TZ UTC+10",
+    "description": "Synthetic timezone fixture: UTC+10 fixed offset",
+    "sub": "AI",
+    "rank": {
+      "ccf": "N",
+      "core": "N",
+      "thcpl": "N"
+    },
+    "dblp": "tzutcp10",
+    "conference_key": "AI/tz-utcp10",
+    "confs": [
+      {
+        "year": 2033,
+        "id": "tzup10-33",
+        "timeline": [
+          {
+            "deadline": "2033-03-10 22:00:00"
+          }
+        ],
+        "timezone": "UTC+10",
+        "date": "March 2033",
+        "place": "Testville (UTC+10)",
+        "link": "https://example.invalid/tz-utcp10"
+      }
+    ]
+  },
+  {
+    "title": "TZ UTC+8",
+    "description": "Synthetic timezone fixture: UTC+8 fixed offset",
+    "sub": "AI",
+    "rank": {
+      "ccf": "N",
+      "core": "N",
+      "thcpl": "N"
+    },
+    "dblp": "tzutcp8",
+    "conference_key": "AI/tz-utcp8",
+    "confs": [
+      {
+        "year": 2033,
+        "id": "tzup8-33",
+        "timeline": [
+          {
+            "deadline": "2033-03-10 20:00:00"
+          }
+        ],
+        "timezone": "UTC+8",
+        "date": "March 2033",
+        "place": "Testville (UTC+8)",
+        "link": "https://example.invalid/tz-utcp8"
+      }
+    ]
+  },
+  {
+    "title": "TZ UTC-5",
+    "description": "Synthetic timezone fixture: UTC-5 fixed offset",
+    "sub": "AI",
+    "rank": {
+      "ccf": "N",
+      "core": "N",
+      "thcpl": "N"
+    },
+    "dblp": "tzutcm5",
+    "conference_key": "AI/tz-utcm5",
+    "confs": [
+      {
+        "year": 2033,
+        "id": "tzum5-33",
+        "timeline": [
+          {
+            "deadline": "2033-03-10 07:00:00"
+          }
+        ],
+        "timezone": "UTC-5",
+        "date": "March 2033",
+        "place": "Testville (UTC-5)",
+        "link": "https://example.invalid/tz-utcm5"
+      }
+    ]
+  },
+  {
+    "title": "TZ PT Winter",
+    "description": "Synthetic timezone fixture: PT in winter (PST, -08:00)",
+    "sub": "AI",
+    "rank": {
+      "ccf": "N",
+      "core": "N",
+      "thcpl": "N"
+    },
+    "dblp": "tzptwinter",
+    "conference_key": "AI/tz-pt-winter",
+    "confs": [
+      {
+        "year": 2033,
+        "id": "tzptw33",
+        "timeline": [
+          {
+            "deadline": "2033-01-15 23:59:59"
+          }
+        ],
+        "timezone": "PT",
+        "date": "January 2033",
+        "place": "Testville (PT winter)",
+        "link": "https://example.invalid/tz-pt-winter"
+      }
+    ]
+  },
+  {
+    "title": "TZ PT Summer",
+    "description": "Synthetic timezone fixture: PT in summer (PDT, -07:00)",
+    "sub": "AI",
+    "rank": {
+      "ccf": "N",
+      "core": "N",
+      "thcpl": "N"
+    },
+    "dblp": "tzptsummer",
+    "conference_key": "AI/tz-pt-summer",
+    "confs": [
+      {
+        "year": 2033,
+        "id": "tzpts33",
+        "timeline": [
+          {
+            "deadline": "2033-07-15 23:59:59"
+          }
+        ],
+        "timezone": "PT",
+        "date": "July 2033",
+        "place": "Testville (PT summer)",
+        "link": "https://example.invalid/tz-pt-summer"
+      }
+    ]
+  },
+  {
+    "title": "TZ PT Spring DST",
+    "description": "Synthetic timezone fixture: PT just after US spring-forward 2033-03-13",
+    "sub": "AI",
+    "rank": {
+      "ccf": "N",
+      "core": "N",
+      "thcpl": "N"
+    },
+    "dblp": "tzptspring",
+    "conference_key": "AI/tz-pt-spring",
+    "confs": [
+      {
+        "year": 2033,
+        "id": "tzptsp33",
+        "timeline": [
+          {
+            "deadline": "2033-03-14 00:30:00"
+          }
+        ],
+        "timezone": "PT",
+        "date": "March 2033",
+        "place": "Testville (PT spring DST)",
+        "link": "https://example.invalid/tz-pt-spring"
+      }
+    ]
+  },
+  {
+    "title": "TZ PT Fall DST",
+    "description": "Synthetic timezone fixture: PT just after US fall-back 2033-11-06",
+    "sub": "AI",
+    "rank": {
+      "ccf": "N",
+      "core": "N",
+      "thcpl": "N"
+    },
+    "dblp": "tzptfall",
+    "conference_key": "AI/tz-pt-fall",
+    "confs": [
+      {
+        "year": 2033,
+        "id": "tzptfa33",
+        "timeline": [
+          {
+            "deadline": "2033-11-07 00:30:00"
+          }
+        ],
+        "timezone": "PT",
+        "date": "November 2033",
+        "place": "Testville (PT fall DST)",
+        "link": "https://example.invalid/tz-pt-fall"
+      }
+    ]
+  }
+]

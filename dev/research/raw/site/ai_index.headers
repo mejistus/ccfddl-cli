@@ -1,0 +1,27 @@
+HTTP/1.1 200 Connection established
+
+HTTP/2 200 
+date: Sun, 18 Oct 2026 07:56:55 GMT
+content-type: text/html; charset=utf-8
+server: cloudflare
+last-modified: Sat, 17 Oct 2026 03:43:17 GMT
+access-control-allow-origin: *
+expires: Sun, 18 Oct 2026 08:06:55 GMT
+cache-control: max-age=600
+report-to: {"group":"cf-nel","max_age":604800,"endpoints":[{"url":"https://a.nel.cloudflare.com/report/v4?s=QjzE392rPcPRnM%2FdqalySxasypEnVDcvj0i3%2Bu08E5kzAxMCXsd7tn35VpY4XzIV400RHRXCbGLQvSsTRylizfweKHitv3jPnCPSlf9JTv3tpSWjJwQk0aA4V8jH"}]}
+x-proxy-cache: MISS
+x-github-request-id: 3D0A:1C3199:A5C20F:ACCA64:6AD47BC6
+x-github-edge-region: japaneast
+nel: {"report_to":"cf-nel","success_fraction":0.0,"max_age":604800}
+age: 0
+via: 1.1 varnish
+x-served-by: cache-itm1220051-ITM
+x-cache: MISS
+x-cache-hits: 0
+x-timer: S1792310216.514400,VS0,VE209
+vary: Accept-Encoding
+x-fastly-request-id: 3516ce0ebf90186c430ddb5abe1beec0f25e37de
+cf-cache-status: DYNAMIC
+cf-ray: a4c5fd3ecee1d3fd-KIX
+alt-svc: h3=":443"; ma=86400
+

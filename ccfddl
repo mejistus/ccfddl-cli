@@ -1,0 +1,1804 @@
+#!/usr/bin/env python3
+"""
+ccfddl — live CCF conference deadline viewer.
+
+Fetches the public CCFDDL catalog on every invocation and prints upcoming paper
+submission deadlines, converted from each venue's own source timezone to UTC for
+ordering and to the selected display timezone for presentation.
+
+No conference data is hardcoded here: the only data literals are the catalog URL,
+the source-timezone alias rules required to interpret the catalog, formatting
+constants and labels. Live catalog: https://ccfddl.com/conference/allconf.json
+
+Run `./ccfddl --help` for options.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import shutil
+import socket
+import sys
+import textwrap
+import unicodedata
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone, tzinfo
+from typing import Any, Iterable, Optional
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+# ---------------------------------------------------------------------------
+# Constants: data URL, timezone alias rules, formatting and labels only.
+# ---------------------------------------------------------------------------
+
+DATA_URL = "https://ccfddl.com/conference/allconf.json"
+USER_AGENT = "ccfddl-cli/2.0 (+https://ccfddl.com; live conference deadline viewer)"
+VERSION = "2.1.0"
+DEFAULT_CATEGORY = "AI"
+DEFAULT_TIMEOUT = 20.0
+
+# Source-timezone interpretation rules (verified against the live catalog):
+#   AoE = "Anywhere on Earth" = UTC-12, a FIXED offset -- never +12.
+#   PT  = America/Los_Angeles, DST-aware -- never a fixed -8.
+#   UTC = +00:00; UTC+N / UTC-N = fixed numeric offsets.
+# Any other value that is a real IANA name is accepted; anything else is
+# reported and skipped, never silently treated as local time.
+TZ_ALIASES = {
+    "AoE": ("fixed", -12, 0),
+    "PT": ("iana", "America/Los_Angeles"),
+}
+
+PAPER = "deadline"
+OTHER_KINDS = ("abstract_deadline", "rebuttal_deadline", "decision_deadline")
+ALL_KINDS = (PAPER,) + OTHER_KINDS
+KIND_LABELS = {
+    PAPER: "paper",
+    "abstract_deadline": "abstract",
+    "rebuttal_deadline": "rebuttal",
+    "decision_deadline": "decision",
+}
+
+WEEKDAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+DASH = "–"           # en dash: "no value"
+ELLIPSIS = "…"
+HORIZONTAL = "─"     # box-drawing horizontal rule
+
+UTC_OFFSET_RE = re.compile(r"^(?:UTC|GMT)([+-])(\d{1,2})(?::?(\d{2}))?$")
+DEADLINE_RE = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$")
+
+DAY = 86400
+RED = "31"
+YELLOW = "33"
+GREEN = "32"
+BOLD = "1"
+DIM = "2"
+CYAN = "36"
+BOLD_CYAN = "1;36"
+RANK_COLORS = {"A": "1;31", "B": YELLOW, "C": CYAN, "N": DIM}
+
+
+class CliError(Exception):
+    """Fatal, user-facing error; no table is printed."""
+
+    def __init__(self, message: str, code: int = 1) -> None:
+        super().__init__(message)
+        self.message = message
+        self.code = code
+
+
+class UsageError(CliError):
+    """Invalid user value that can only be validated once the catalog is loaded."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message, code=2)
+
+
+# ---------------------------------------------------------------------------
+# Timezones
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class SourceZone:
+    """A timezone as declared by an edition in the catalog."""
+
+    label: str
+    tz: tzinfo
+
+
+def parse_source_timezone(value: Any) -> Optional[SourceZone]:
+    """Map a catalog timezone value to a tzinfo; None when unrecognized."""
+    if value is None:
+        return None
+    label = str(value).strip()
+    if not label:
+        return None
+
+    alias = TZ_ALIASES.get(label)
+    if alias is not None:
+        kind, *payload = alias
+        if kind == "fixed":
+            return SourceZone(label, timezone(timedelta(hours=payload[0], minutes=payload[1])))
+        try:
+            return SourceZone(label, ZoneInfo(payload[0]))
+        except (ZoneInfoNotFoundError, ValueError):
+            return None
+
+    upper = label.upper()
+    if upper in ("UTC", "UTC+0", "UTC-0", "GMT", "GMT+0", "Z"):
+        return SourceZone(label, timezone.utc)
+
+    match = UTC_OFFSET_RE.fullmatch(label)
+    if match is not None:
+        sign = 1 if match.group(1) == "+" else -1
+        hours = int(match.group(2))
+        minutes = int(match.group(3) or 0)
+        if hours > 14 or minutes > 59:
+            return None
+        return SourceZone(label, timezone(sign * timedelta(hours=hours, minutes=minutes)))
+
+    # Future-proofing: accept a genuine IANA name if the catalog ever uses one.
+    if "/" in label:
+        try:
+            return SourceZone(label, ZoneInfo(label))
+        except (ZoneInfoNotFoundError, ValueError):
+            return None
+
+    return None
+
+
+def detect_system_timezone() -> tuple[str, tzinfo]:
+    """Best-effort resolution of the system's IANA timezone."""
+    env_tz = os.environ.get("TZ")
+    if env_tz:
+        try:
+            return env_tz, ZoneInfo(env_tz)
+        except (ZoneInfoNotFoundError, ValueError):
+            pass
+
+    candidates: list[str] = []
+    try:
+        with open("/etc/timezone", "r", encoding="utf-8") as handle:
+            candidates.append(handle.read().strip())
+    except OSError:
+        pass
+    try:
+        real = os.path.realpath("/etc/localtime")
+        marker = "zoneinfo/"
+        if marker in real:
+            candidates.append(real.split(marker, 1)[1])
+    except OSError:
+        pass
+
+    for candidate in candidates:
+        if not candidate:
+            continue
+        try:
+            return candidate, ZoneInfo(candidate)
+        except (ZoneInfoNotFoundError, ValueError):
+            continue
+
+    local = datetime.now().astimezone().tzinfo or timezone.utc
+    label = getattr(local, "key", None) or datetime.now().astimezone().tzname() or "local"
+    return label, local
+
+
+def validate_display_tz(value: str) -> str:
+    try:
+        ZoneInfo(value)
+    except (ZoneInfoNotFoundError, ValueError):
+        raise argparse.ArgumentTypeError(
+            f"unknown timezone {value!r}; use an IANA name "
+            f"(for example Asia/Shanghai, America/Los_Angeles) or UTC"
+        )
+    return value
+
+
+def format_offset_seconds(moment: datetime) -> str:
+    offset = moment.utcoffset() or timedelta(0)
+    total = int(offset.total_seconds())
+    sign = "+" if total >= 0 else "-"
+    total = abs(total)
+    return f"UTC{sign}{total // 3600:02d}:{(total % 3600) // 60:02d}"
+
+
+# ---------------------------------------------------------------------------
+# Numeric argument validators
+# ---------------------------------------------------------------------------
+
+
+def nonnegative_int(value: str) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        raise argparse.ArgumentTypeError(f"expected a non-negative integer, got {value!r}")
+    if parsed < 0:
+        raise argparse.ArgumentTypeError(f"expected a non-negative integer, got {value!r}")
+    return parsed
+
+
+def positive_float(value: str) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        raise argparse.ArgumentTypeError(f"expected a positive number, got {value!r}")
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError(f"expected a positive number, got {value!r}")
+    return parsed
+
+
+def rank_list(value: str) -> list[str]:
+    items = [item.strip().upper() for item in value.split(",") if item.strip()]
+    if not items:
+        raise argparse.ArgumentTypeError("expected a comma-separated list of CCF ranks (A,B,C,N)")
+    invalid = [item for item in items if item not in ("A", "B", "C", "N")]
+    if invalid:
+        raise argparse.ArgumentTypeError(
+            "invalid CCF rank(s): " + ", ".join(invalid) + " (allowed: A, B, C, N)"
+        )
+    deduped: list[str] = []
+    for item in items:
+        if item not in deduped:
+            deduped.append(item)
+    return deduped
+
+
+# ---------------------------------------------------------------------------
+# Catalog loading
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class Warnings:
+    unknown_timezones: dict[str, set[str]] = field(default_factory=dict)
+    malformed_dates: list[str] = field(default_factory=list)
+    malformed_count: int = 0
+
+    def unknown_tz(self, label: Any, conference: str) -> None:
+        key = "<missing>" if label is None else str(label)
+        self.unknown_timezones.setdefault(key, set()).add(conference)
+
+    def malformed(self, field_name: str, raw: Any, conference: str, year: Any) -> None:
+        self.malformed_count += 1
+        if len(self.malformed_dates) < 5:
+            self.malformed_dates.append(
+                f"{conference} {year}: {field_name}={raw!r} is not 'YYYY-MM-DD HH:MM:SS'"
+            )
+
+    def lines(self) -> list[str]:
+        out: list[str] = []
+        for label, conferences in sorted(self.unknown_timezones.items(), key=lambda item: item[0]):
+            names = ", ".join(sorted(conferences)[:4])
+            suffix = f" (affects: {names})" if names else ""
+            out.append(f"unrecognized source timezone {label!r}; skipped its deadlines{suffix}")
+        if self.malformed_count:
+            out.append(
+                f"skipped {self.malformed_count} unparsable date value(s); only "
+                "'YYYY-MM-DD HH:MM:SS' and 'TBD' are accepted, nothing is guessed"
+            )
+            for detail in self.malformed_dates:
+                out.append("  " + detail)
+        return out
+
+
+def read_catalog(args: argparse.Namespace, now_utc: datetime) -> tuple[list[dict], datetime, str]:
+    """Return (catalog, fetched_at, origin); raise CliError on any failure."""
+    if args.data_file:
+        if args.data_file == "-":
+            try:
+                payload = sys.stdin.buffer.read()
+            except OSError as exc:
+                raise CliError(f"cannot read catalog from stdin: {exc}") from exc
+            fetched_at = now_utc
+            origin = "stdin"
+        else:
+            path = args.data_file
+            try:
+                stat = os.stat(path)
+                with open(path, "rb") as handle:
+                    payload = handle.read()
+            except OSError as exc:
+                detail = getattr(exc, "strerror", None) or str(exc)
+                raise CliError(f"cannot read data file {path!r}: {detail}") from exc
+            fetched_at = datetime.fromtimestamp(stat.st_mtime, timezone.utc).replace(microsecond=0)
+            origin = f"local file {path}"
+    else:
+        request = Request(
+            DATA_URL,
+            headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
+        )
+        try:
+            with urlopen(request, timeout=args.timeout) as response:
+                payload = response.read()
+        except HTTPError as exc:
+            raise CliError(
+                f"HTTP {exc.code} from {DATA_URL}: {exc.reason}; no data displayed "
+                "(this tool never falls back to a stale table)"
+            ) from exc
+        except URLError as exc:
+            raise CliError(
+                f"cannot fetch {DATA_URL}: {exc.reason}; no data displayed "
+                "(this tool never falls back to a stale table)"
+            ) from exc
+        except (TimeoutError, socket.timeout) as exc:
+            raise CliError(
+                f"timed out after {args.timeout:g}s fetching {DATA_URL}; no data displayed"
+            ) from exc
+        except OSError as exc:
+            raise CliError(f"cannot fetch {DATA_URL}: {exc}; no data displayed") from exc
+        fetched_at = datetime.now(timezone.utc).replace(microsecond=0)
+        origin = "live fetch"
+
+    try:
+        text = payload.decode("utf-8-sig")
+    except UnicodeDecodeError as exc:
+        raise CliError(f"catalog from {origin} is not valid UTF-8: {exc}") from exc
+    try:
+        catalog = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise CliError(
+            f"catalog from {origin} is not valid JSON: {exc.msg} "
+            f"(line {exc.lineno}, column {exc.colno})"
+        ) from exc
+    if not isinstance(catalog, list):
+        raise CliError(f"catalog from {origin} has an unexpected shape: expected a JSON list")
+    series = [item for item in catalog if isinstance(item, dict)]
+    if not series:
+        raise CliError(f"catalog from {origin} contains no conference series")
+    return series, fetched_at, origin
+
+
+def catalog_categories(catalog: Iterable[dict]) -> tuple[dict[str, str], list[str]]:
+    """Return (casefolded sub -> canonical sub, sorted canonical list)."""
+    by_fold: dict[str, str] = {}
+    for series in catalog:
+        sub = series.get("sub")
+        if isinstance(sub, str) and sub.strip():
+            by_fold.setdefault(sub.strip().casefold(), sub.strip())
+    return by_fold, sorted(set(by_fold.values()), key=str.casefold)
+
+
+def resolve_category(catalog: list[dict], raw: Optional[str]) -> Optional[str]:
+    """Return the canonical category name, or None meaning every area."""
+    by_fold, available = catalog_categories(catalog)
+    requested = DEFAULT_CATEGORY if raw is None else raw.strip()
+    if requested.casefold() == "all":
+        return None
+    canonical = by_fold.get(requested.casefold())
+    if canonical is None:
+        raise UsageError(
+            f"unknown category {requested!r}; available: "
+            + ", ".join(available)
+            + " (or 'all')"
+        )
+    return canonical
+
+
+def series_rank(series: dict) -> Optional[str]:
+    rank = (series.get("rank") or {}).get("ccf")
+    if rank is None:
+        return None
+    text = str(rank).strip().upper()
+    return text or None
+
+
+def parse_deadline(raw: Any) -> tuple[Optional[datetime], str]:
+    """Parse a source datetime. 'TBD' is never interpreted as a date."""
+    if raw is None:
+        return None, "absent"
+    text = str(raw).strip()
+    if not text:
+        return None, "absent"
+    if text.upper() == "TBD":
+        return None, "tbd"
+    if not DEADLINE_RE.fullmatch(text):
+        return None, "malformed"
+    try:
+        return datetime.strptime(text, "%Y-%m-%d %H:%M:%S"), "ok"
+    except ValueError:
+        return None, "malformed"
+
+
+# ---------------------------------------------------------------------------
+# Event model
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class Event:
+    conference_key: str
+    conference: str
+    year: int
+    ccf_rank: Optional[str]
+    kind: str
+    deadline_utc: datetime
+    deadline_local: datetime
+    deadline_source: str
+    source_timezone: str
+    abstract_utc: Optional[datetime]
+    abstract_local: Optional[datetime]
+    abstract_source: Optional[str]
+    seconds_left: int
+    comment: str
+    event_date: str
+    place: str
+    link: str
+
+    @property
+    def rank_cell(self) -> str:
+        if self.ccf_rank in ("A", "B", "C"):
+            return self.ccf_rank
+        return DASH
+
+    @property
+    def kind_label(self) -> str:
+        return KIND_LABELS.get(self.kind, self.kind)
+
+
+@dataclass
+class TbdEntry:
+    conference_key: str
+    conference: str
+    year: int
+    ccf_rank: Optional[str]
+    event_date: str
+    place: str
+    link: str
+
+    @property
+    def rank_cell(self) -> str:
+        if self.ccf_rank in ("A", "B", "C"):
+            return self.ccf_rank
+        return DASH
+
+
+def isoformat_seconds(moment: Optional[datetime]) -> Optional[str]:
+    if moment is None:
+        return None
+    return moment.replace(microsecond=0).isoformat()
+
+
+def build_events(
+    catalog: list[dict],
+    *,
+    category: Optional[str],
+    ranks: Optional[list[str]],
+    now_utc: datetime,
+    display_tz: tzinfo,
+    all_kinds: bool,
+    warnings: Warnings,
+) -> tuple[list[Event], int]:
+    """Build upcoming events and count the series under consideration."""
+    events: list[Event] = []
+    seen: set[tuple] = set()
+    tracked = 0
+
+    for series in catalog:
+        sub = series.get("sub")
+        if category is not None and str(sub or "").casefold() != category.casefold():
+            continue
+        ccf_rank = series_rank(series)
+        if ranks is not None and ccf_rank not in ranks:
+            continue
+        tracked += 1
+
+        conference_key = str(series.get("conference_key") or series.get("title") or "").strip()
+        conference = str(series.get("title") or conference_key).strip()
+
+        for edition in series.get("confs") or []:
+            if not isinstance(edition, dict):
+                continue
+            try:
+                edition_year = int(edition.get("year"))
+            except (TypeError, ValueError):
+                edition_year = 0
+            zone = parse_source_timezone(edition.get("timezone"))
+            timeline = edition.get("timeline") or []
+            if zone is None:
+                if any(
+                    parse_deadline(entry.get(field_name))[1] == "ok"
+                    for entry in timeline
+                    if isinstance(entry, dict)
+                    for field_name in ALL_KINDS
+                ):
+                    warnings.unknown_tz(edition.get("timezone"), conference)
+                continue
+
+            edition_id = edition.get("id") or f"{conference_key}-{edition_year}"
+            event_date = str(edition.get("date") or "").strip()
+            place = str(edition.get("place") or "").strip()
+            link = str(edition.get("link") or "").strip()
+
+            for entry in timeline:
+                if not isinstance(entry, dict):
+                    continue
+                comment = str(entry.get("comment") or "").strip()
+                abstract_naive, _ = parse_deadline(entry.get("abstract_deadline"))
+                abstract_utc = (
+                    abstract_naive.replace(tzinfo=zone.tz).astimezone(timezone.utc)
+                    if abstract_naive is not None
+                    else None
+                )
+
+                for field_name in (ALL_KINDS if all_kinds else (PAPER,)):
+                    raw = entry.get(field_name)
+                    naive, status = parse_deadline(raw)
+                    if status == "malformed":
+                        warnings.malformed(field_name, raw, conference, edition_year)
+                        continue
+                    if naive is None:  # TBD or absent: never invent a date
+                        continue
+                    utc = naive.replace(tzinfo=zone.tz).astimezone(timezone.utc)
+                    if utc <= now_utc:
+                        continue
+                    dedupe_key = (
+                        conference_key,
+                        str(edition_id),
+                        field_name,
+                        utc.replace(microsecond=0).isoformat(),
+                        comment,
+                    )
+                    if dedupe_key in seen:
+                        continue
+                    seen.add(dedupe_key)
+
+                    if field_name == PAPER:
+                        abs_utc, abs_source = abstract_utc, entry.get("abstract_deadline")
+                    elif field_name == "abstract_deadline":
+                        abs_utc, abs_source = utc, raw
+                    else:
+                        abs_utc, abs_source = None, None
+
+                    seconds_left = int((utc - now_utc).total_seconds())
+                    events.append(
+                        Event(
+                            conference_key=conference_key,
+                            conference=conference,
+                            year=edition_year,
+                            ccf_rank=ccf_rank,
+                            kind=field_name,
+                            deadline_utc=utc,
+                            deadline_local=utc.astimezone(display_tz),
+                            deadline_source=str(raw).strip(),
+                            source_timezone=zone.label,
+                            abstract_utc=abs_utc,
+                            abstract_local=abs_utc.astimezone(display_tz) if abs_utc else None,
+                            abstract_source=str(abs_source).strip() if abs_source else None,
+                            seconds_left=seconds_left,
+                            comment=comment,
+                            event_date=event_date,
+                            place=place,
+                            link=link,
+                        )
+                    )
+
+    events.sort(
+        key=lambda event: (
+            event.deadline_utc,
+            event.conference.casefold(),
+            event.year,
+            event.kind,
+            event.comment.casefold(),
+            event.conference_key,
+        )
+    )
+    return events, tracked
+
+
+def build_tbd(
+    catalog: list[dict],
+    *,
+    category: Optional[str],
+    ranks: Optional[list[str]],
+    now_utc: datetime,
+    display_tz: tzinfo,
+) -> list[TbdEntry]:
+    """Series with no announced (still TBD/absent) deadline in their latest edition."""
+    current_year = now_utc.astimezone(display_tz).year
+    entries: list[TbdEntry] = []
+
+    for series in catalog:
+        sub = series.get("sub")
+        if category is not None and str(sub or "").casefold() != category.casefold():
+            continue
+        ccf_rank = series_rank(series)
+        if ranks is not None and ccf_rank not in ranks:
+            continue
+
+        editions = [edition for edition in series.get("confs") or [] if isinstance(edition, dict)]
+        if not editions:
+            continue
+
+        # (a) no upcoming dated paper deadline in any edition.
+        has_upcoming = False
+        for edition in editions:
+            zone = parse_source_timezone(edition.get("timezone"))
+            if zone is None:
+                continue
+            for entry in edition.get("timeline") or []:
+                if not isinstance(entry, dict):
+                    continue
+                naive, status = parse_deadline(entry.get(PAPER))
+                if status != "ok" or naive is None:
+                    continue
+                if naive.replace(tzinfo=zone.tz).astimezone(timezone.utc) > now_utc:
+                    has_upcoming = True
+                    break
+            if has_upcoming:
+                break
+        if has_upcoming:
+            continue
+
+        years: list[int] = []
+        for edition in editions:
+            try:
+                years.append(int(edition.get("year")))
+            except (TypeError, ValueError):
+                continue
+        if not years:
+            continue
+        latest_year = max(years)
+        # (c) latest edition year >= current display year.
+        if latest_year < current_year:
+            continue
+
+        latest_editions = []
+        for edition in editions:
+            try:
+                edition_year = int(edition.get("year"))
+            except (TypeError, ValueError):
+                continue
+            if edition_year == latest_year:
+                latest_editions.append(edition)
+
+        # (b) every timeline entry's paper deadline in the latest edition is TBD/absent.
+        announce_missing = True
+        for edition in latest_editions:
+            timeline = edition.get("timeline") or []
+            for entry in timeline:
+                if not isinstance(entry, dict):
+                    continue
+                _, status = parse_deadline(entry.get(PAPER))
+                if status not in ("tbd", "absent"):
+                    announce_missing = False
+                    break
+            if not announce_missing:
+                break
+        if not announce_missing:
+            continue
+
+        chosen = sorted(latest_editions, key=lambda edition: str(edition.get("id") or ""))[-1]
+        entries.append(
+            TbdEntry(
+                conference_key=str(series.get("conference_key") or series.get("title") or "").strip(),
+                conference=str(series.get("title") or "").strip(),
+                year=latest_year,
+                ccf_rank=ccf_rank,
+                event_date=str(chosen.get("date") or "").strip(),
+                place=str(chosen.get("place") or "").strip(),
+                link=str(chosen.get("link") or "").strip(),
+            )
+        )
+
+    entries.sort(key=lambda entry: (entry.conference.casefold(), entry.year, entry.conference_key))
+    return entries
+
+
+# ---------------------------------------------------------------------------
+# Filtering
+# ---------------------------------------------------------------------------
+
+
+def filter_events(events: list[Event], *, days: int, now_utc: datetime) -> list[Event]:
+    if days <= 0:
+        return events
+    cutoff = now_utc + timedelta(days=days)
+    return [event for event in events if event.deadline_utc <= cutoff]
+
+
+def apply_limit(events: list[Event], limit: int) -> tuple[list[Event], int]:
+    if limit <= 0 or limit >= len(events):
+        return events, 0
+    return events[:limit], len(events) - limit
+
+
+# ---------------------------------------------------------------------------
+# Unicode-width-aware text helpers (stdlib only)
+# ---------------------------------------------------------------------------
+
+
+def char_width(char: str) -> int:
+    if unicodedata.combining(char):
+        return 0
+    return 2 if unicodedata.east_asian_width(char) in ("W", "F") else 1
+
+
+def text_width(text: str) -> int:
+    return sum(char_width(char) for char in text)
+
+
+def truncate(text: str, width: int) -> str:
+    if width <= 0:
+        return ""
+    if text_width(text) <= width:
+        return text
+    if width == 1:
+        return ELLIPSIS
+    chunk: list[str] = []
+    used = 0
+    for char in text:
+        size = char_width(char)
+        if used + size > width - 1:
+            break
+        chunk.append(char)
+        used += size
+    return "".join(chunk) + ELLIPSIS
+
+
+def pad(text: str, width: int, align: str = "left") -> str:
+    visible = text_width(text)
+    if visible > width:
+        text = truncate(text, width)
+        visible = text_width(text)
+    filler = " " * (width - visible)
+    return text + filler if align == "left" else filler + text
+
+
+def paint(text: str, code: str, enabled: bool) -> str:
+    if not enabled or not text:
+        return text
+    return f"\x1b[{code}m{text}\x1b[0m"
+
+
+def render_cell(text: str, width: int, color: Optional[str] = None, colors: bool = False) -> str:
+    """Pad a cell to width, colouring only its visible content (not the padding)."""
+    visible = truncate(text, width)
+    printed = paint(visible, color, colors) if color else visible
+    return printed + " " * (width - text_width(visible))
+
+
+def format_countdown(seconds: int) -> str:
+    if seconds < 3600:
+        return "<1h"
+    if seconds < DAY:
+        hours = seconds // 3600
+        minutes = (seconds % 3600) // 60
+        return f"{hours}h {minutes}m" if minutes else f"{hours}h"
+    days = seconds // DAY
+    hours = (seconds % DAY) // 3600
+    return f"{days}d {hours}h" if hours else f"{days}d"
+
+
+def countdown_color(seconds: int) -> str:
+    if seconds <= 3 * DAY:
+        return RED
+    if seconds <= 14 * DAY:
+        return YELLOW
+    return GREEN
+
+
+def format_local_datetime(moment: datetime) -> str:
+    return f"{moment.strftime('%Y-%m-%d')} {WEEKDAYS[moment.weekday()]} {moment.strftime('%H:%M')}"
+
+
+def format_abstract_datetime(moment: datetime) -> str:
+    return moment.strftime("%Y-%m-%d %H:%M")
+
+
+def abstract_cell(event: "Event", width: int) -> str:
+    """Abstract deadline for the same timeline entry, compact at narrow widths."""
+    if event.abstract_local is None:
+        return DASH
+    if width >= text_width("YYYY-MM-DD HH:MM"):
+        return format_abstract_datetime(event.abstract_local)
+    return event.abstract_local.strftime("%m-%d %H:%M")
+
+
+def terminal_width() -> int:
+    raw = os.environ.get("COLUMNS")
+    if raw:
+        try:
+            columns = int(raw)
+        except ValueError:
+            columns = 0
+        if columns > 0:
+            return max(48, min(columns, 180))
+    try:
+        columns = shutil.get_terminal_size(fallback=(100, 24)).columns
+    except OSError:
+        columns = 100
+    return max(48, min(columns, 180))
+
+
+def colors_enabled(args: argparse.Namespace) -> bool:
+    if args.no_color:
+        return False
+    if "NO_COLOR" in os.environ:
+        return False
+    if os.environ.get("TERM", "") == "dumb":
+        return False
+    return sys.stdout.isatty()
+
+
+# ---------------------------------------------------------------------------
+# Table layout & rendering
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class Layout:
+    term_width: int
+    conf_width: int
+    ccf_width: int
+    kind_width: int
+    deadline_width: int
+    left_width: int
+    abstract_width: int
+    note_width: int
+    gaps: int
+    single_line_tz_header: bool
+
+    @property
+    def columns(self) -> int:
+        return 6 + (1 if self.kind_width else 0)
+
+    @property
+    def total_width(self) -> int:
+        return (
+            self.conf_width
+            + self.ccf_width
+            + self.kind_width
+            + self.deadline_width
+            + self.left_width
+            + self.abstract_width
+            + self.note_width
+            + self.gaps
+        )
+
+
+def compute_layout(
+    events: list[Event],
+    *,
+    term_width: int,
+    all_kinds: bool,
+    tz_label: str,
+) -> Layout:
+    conf_needed = text_width("Conference")
+    note_needed = text_width("Note")
+    left_needed = text_width("Left")
+    abstract_needed = text_width("Abstract")
+    for event in events:
+        conf_needed = max(conf_needed, text_width(f"{event.conference} {event.year}"))
+        note_needed = max(note_needed, text_width(event.comment or DASH))
+        left_needed = max(left_needed, text_width(format_countdown(event.seconds_left)))
+        if event.abstract_local is not None:
+            abstract_needed = max(abstract_needed, text_width(format_abstract_datetime(event.abstract_local)))
+
+    ccf_width = 3
+    kind_width = 8 if all_kinds else 0
+    single_line_tz_header = term_width >= 104
+    if single_line_tz_header:
+        deadline_width = max(20, text_width(f"Deadline ({tz_label})"))
+    else:
+        deadline_width = max(20, text_width(f"({tz_label})"))
+    left_width = max(6, left_needed)
+
+    columns = 6 + (1 if all_kinds else 0)
+    gaps = 2 * (columns - 1)
+    fixed_base = ccf_width + kind_width + deadline_width + left_width + gaps
+
+    # Pick the widest layout that fits: prefer the full abstract column, then a
+    # compact "MM-DD HH:MM" form, and only then squeeze the note column. The
+    # conference column is kept at >= 12 so venue names stay recognisable.
+    abstract_options = [max(abstract_needed, 11)]
+    if abstract_options[0] > 11:
+        abstract_options.append(11)
+    chosen: Optional[tuple[int, int, int]] = None
+    for candidate_abstract in abstract_options:
+        for candidate_note in (10, 8, 6, 4):
+            if fixed_base + candidate_abstract + 12 + candidate_note <= term_width:
+                chosen = (candidate_abstract, 12, candidate_note)
+                break
+        if chosen is not None:
+            break
+    if chosen is None:
+        # Below the practical minimum width: best effort, never wrap a date token.
+        candidate_abstract = abstract_options[-1]
+        available = max(10, term_width - (fixed_base + candidate_abstract))
+        chosen = (candidate_abstract, 8, max(2, min(4, available - 8)))
+    abstract_width, conf_min, note_min = chosen
+
+    fixed = fixed_base + abstract_width
+    available = max(conf_min + note_min, term_width - fixed)
+    conf_width = max(conf_min, min(conf_needed, available - note_min))
+    note_width = max(note_min, available - conf_width)
+    if conf_width + note_width < available:
+        note_width = available - conf_width
+
+    return Layout(
+        term_width=term_width,
+        conf_width=conf_width,
+        ccf_width=ccf_width,
+        kind_width=kind_width,
+        deadline_width=deadline_width,
+        left_width=left_width,
+        abstract_width=abstract_width,
+        note_width=note_width,
+        gaps=gaps,
+        single_line_tz_header=single_line_tz_header,
+    )
+
+
+def table_lines(
+    events: list[Event],
+    *,
+    layout: Layout,
+    tz_label: str,
+    colors: bool,
+    all_kinds: bool,
+) -> list[str]:
+    """Render the aligned table without third-party dependencies."""
+    gap = " " * 2
+
+    def header_row() -> str:
+        cells = [pad("Conference", layout.conf_width), pad("CCF", layout.ccf_width)]
+        if all_kinds:
+            cells.append(pad("Kind", layout.kind_width))
+        cells.append(
+            pad(
+                f"Deadline ({tz_label})" if layout.single_line_tz_header else "Deadline",
+                layout.deadline_width,
+            )
+        )
+        cells.extend(
+            [
+                pad("Left", layout.left_width),
+                pad("Abstract", layout.abstract_width),
+                pad("Note", layout.note_width),
+            ]
+        )
+        return gap.join(cells)
+
+    lines: list[str] = [header_row()]
+    if not layout.single_line_tz_header:
+        tz_header = f"({tz_label})"
+        padded_tz = pad(tz_header, layout.deadline_width)
+        cells = [pad("", layout.conf_width), pad("", layout.ccf_width)]
+        if all_kinds:
+            cells.append(pad("", layout.kind_width))
+        cells.extend(
+            [
+                padded_tz,
+                pad("", layout.left_width),
+                pad("", layout.abstract_width),
+                pad("", layout.note_width),
+            ]
+        )
+        lines.append(gap.join(cells))
+
+    if colors:
+        lines = [paint(line, BOLD_CYAN, True) for line in lines]
+    lines.append(HORIZONTAL * min(layout.total_width, layout.term_width))
+
+    for event in events:
+        cells = [
+            render_cell(f"{event.conference} {event.year}", layout.conf_width, BOLD, colors),
+            render_cell(event.rank_cell, layout.ccf_width, RANK_COLORS.get(event.ccf_rank or "", DIM), colors),
+        ]
+        if all_kinds:
+            cells.append(render_cell(event.kind_label, layout.kind_width, DIM, colors))
+        cells.extend(
+            [
+                render_cell(format_local_datetime(event.deadline_local), layout.deadline_width),
+                render_cell(
+                    format_countdown(event.seconds_left),
+                    layout.left_width,
+                    countdown_color(event.seconds_left),
+                    colors,
+                ),
+                render_cell(
+                    abstract_cell(event, layout.abstract_width),
+                    layout.abstract_width,
+                    DIM,
+                    colors,
+                ),
+                render_cell(event.comment or DASH, layout.note_width, DIM, colors),
+            ]
+        )
+        lines.append(gap.join(cells))
+
+    return lines
+
+
+def rich_available() -> bool:
+    try:
+        import rich.box  # noqa: F401
+        import rich.console  # noqa: F401
+        import rich.table  # noqa: F401
+    except Exception:
+        return False
+    return True
+
+
+def rich_table_lines(
+    events: list[Event],
+    *,
+    layout: Layout,
+    tz_label: str,
+    colors: bool,
+    all_kinds: bool,
+) -> list[str]:
+    """Render the table with optional `rich` polish (interactive terminals only)."""
+    from rich import box
+    from rich.console import Console
+    from rich.table import Table
+
+    console = Console(
+        width=layout.term_width,
+        no_color=not colors,
+        force_terminal=colors,
+        highlight=False,
+        soft_wrap=False,
+    )
+    table = Table(
+        box=box.SIMPLE_HEAD,
+        show_edge=False,
+        pad_edge=False,
+        padding=(0, 1),
+        expand=False,
+        header_style="bold cyan",
+    )
+    table.add_column("Conference", width=layout.conf_width, no_wrap=True, overflow="ellipsis")
+    table.add_column("CCF", width=layout.ccf_width, no_wrap=True)
+    if all_kinds:
+        table.add_column("Kind", width=layout.kind_width, no_wrap=True)
+    if layout.single_line_tz_header:
+        table.add_column(f"Deadline ({tz_label})", width=layout.deadline_width, no_wrap=True)
+    else:
+        table.add_column("Deadline\n(" + tz_label + ")", width=layout.deadline_width, no_wrap=True)
+    table.add_column("Left", width=layout.left_width, no_wrap=True)
+    table.add_column("Abstract", width=layout.abstract_width, no_wrap=True)
+    table.add_column("Note", width=layout.note_width, no_wrap=True, overflow="ellipsis")
+
+    for event in events:
+        row: list[str] = [f"{event.conference} {event.year}", event.rank_cell]
+        if all_kinds:
+            row.append(event.kind_label)
+        row.append(format_local_datetime(event.deadline_local))
+        row.append(f"[{countdown_color(event.seconds_left)}]{format_countdown(event.seconds_left)}[/]")
+        row.append(abstract_cell(event, layout.abstract_width))
+        row.append(event.comment or DASH)
+        table.add_row(*row)
+
+    with console.capture() as capture:
+        console.print(table)
+    return capture.get().rstrip("\n").splitlines()
+
+
+# ---------------------------------------------------------------------------
+# Title, footer, TBD section
+# ---------------------------------------------------------------------------
+
+
+def category_label(category: Optional[str]) -> str:
+    return "all areas" if category is None else category
+
+
+def title_line(category: Optional[str], ranks: Optional[list[str]], days: int) -> str:
+    text = f"Upcoming {category_label(category)} Conference Deadlines — live CCFDDL data"
+    extras: list[str] = []
+    if ranks:
+        extras.append("CCF " + "/".join(ranks) + " only")
+    if days:
+        extras.append(f"next {days} days")
+    if extras:
+        text += " (" + ", ".join(extras) + ")"
+    return text
+
+
+def wrap_display_line(text: str, width: int) -> list[str]:
+    """Wrap one display line, hanging continuation lines under the content."""
+    if text_width(text) <= width:
+        return [text]
+    if " : " in text:
+        head, body = text.split(" : ", 1)
+        prefix = head + " : "
+        indent = text_width(prefix)
+        chunks = textwrap.wrap(
+            body, width=max(10, width - indent), break_long_words=True, break_on_hyphens=False
+        ) or [""]
+        return [prefix + chunks[0]] + [" " * indent + chunk for chunk in chunks[1:]]
+    indent = len(text) - len(text.lstrip(" "))
+    continuation = indent + 2
+    chunks = textwrap.wrap(
+        text.strip(),
+        width=max(10, width - continuation),
+        break_long_words=True,
+        break_on_hyphens=False,
+    ) or [""]
+    return [" " * indent + chunks[0]] + [" " * continuation + chunk for chunk in chunks[1:]]
+
+
+def title_lines(title: str, width: int, colors: bool) -> list[str]:
+    chunks = textwrap.wrap(title, width=max(20, width), break_long_words=False) or [title]
+    return [paint(chunk, BOLD, colors) for chunk in chunks]
+
+
+def wrap_prefixed(text: str, width: int, indent: int) -> list[str]:
+    """Word-wrap a prefixed line, hanging subsequent lines under the content."""
+    if text_width(text) <= width:
+        return [text]
+    head = text[:indent]
+    body = text[indent:]
+    available = max(20, width - indent)
+    chunks = textwrap.wrap(
+        body, width=available, break_long_words=True, break_on_hyphens=False
+    ) or [""]
+    wrapped = [head + chunks[0]]
+    wrapped.extend(" " * indent + chunk for chunk in chunks[1:])
+    return wrapped
+
+
+
+def footer_lines(
+    *,
+    args: argparse.Namespace,
+    fetched_at: datetime,
+    origin: str,
+    display_tz: tzinfo,
+    tz_label: str,
+    category: Optional[str],
+    tracked: int,
+    shown: int,
+    matched: int,
+    tbd_count: int,
+    all_kinds: bool,
+    term_width: int,
+) -> list[str]:
+    local_fetched = fetched_at.astimezone(display_tz)
+    utc_fetched = fetched_at.astimezone(timezone.utc)
+    offset = format_offset_seconds(local_fetched)
+    raw: list[str] = [HORIZONTAL * 64]
+    raw.append(f"source   : {DATA_URL}")
+    raw.append(
+        f"fetched  : {local_fetched.strftime('%Y-%m-%d %H:%M:%S')} {offset}"
+        f"  ({utc_fetched.strftime('%Y-%m-%dT%H:%M:%SZ')})  — {origin}"
+    )
+    kind_text = "timeline deadline" if all_kinds else "paper deadline"
+    shown_text = str(shown) if matched == shown else f"{shown} of {matched}"
+    plural = "" if shown == 1 else "s"
+    raw.append(
+        f"showing  : {shown_text} {kind_text}{plural} · {tracked} {category_label(category)} "
+        f"series tracked · display tz {tz_label} ({offset})"
+    )
+    if args.days:
+        raw.append(
+            f"window   : deadlines within the next {args.days} day(s) of "
+            f"{utc_fetched.strftime('%Y-%m-%dT%H:%M:%SZ')}"
+        )
+    if matched != shown:
+        raw.append(
+            f"limit    : {matched - shown} more matching row(s) hidden by --limit {args.limit}"
+        )
+    if tbd_count and not args.include_tbd:
+        verb = "has" if tbd_count == 1 else "have"
+        pronoun = "it" if tbd_count == 1 else "them"
+        raw.append(
+            f"tbd      : {tbd_count} series {verb} no announced deadline; "
+            f"use --include-tbd to list {pronoun} (TBD is unknown, not a date)"
+        )
+    raw.append(
+        "caveat   : live catalog data can change; always verify the deadline on the "
+        "official venue page before acting."
+    )
+    lines: list[str] = []
+    for line in raw:
+        if line.startswith(HORIZONTAL):
+            lines.append(line)
+        else:
+            lines.extend(wrap_prefixed(line, term_width, 11))
+    return lines
+
+
+def tbd_lines(entries: list[TbdEntry], *, term_width: int, colors: bool) -> list[str]:
+    lines: list[str] = [""]
+    lines.append(paint(f"TBD — deadline not yet announced ({len(entries)} series)", BOLD_CYAN, colors))
+    if not entries:
+        lines.append("  (none in the selected category)")
+        return lines
+    for entry in entries:
+        head = (
+            f"  {entry.conference} {entry.year}  ·  CCF {entry.rank_cell}  ·  "
+            f"{entry.event_date or DASH}  ·  {entry.place or DASH}"
+        )
+        lines.extend(wrap_prefixed(head, term_width, 2))
+        link = entry.link or "(no link in catalog)"
+        lines.extend(
+            wrap_prefixed(f"      deadline not announced (TBD) — {link}", term_width, 6)
+        )
+    return lines
+
+
+# ---------------------------------------------------------------------------
+# JSON payload
+# ---------------------------------------------------------------------------
+
+
+def event_to_json(event: Event) -> dict[str, Any]:
+    return {
+        "conference_key": event.conference_key,
+        "conference": event.conference,
+        "year": event.year,
+        "ccf_rank": event.ccf_rank,
+        "kind": event.kind,
+        "deadline_utc": isoformat_seconds(event.deadline_utc),
+        "deadline_local": isoformat_seconds(event.deadline_local),
+        "deadline_source": event.deadline_source,
+        "source_timezone": event.source_timezone,
+        "abstract_utc": isoformat_seconds(event.abstract_utc),
+        "abstract_local": isoformat_seconds(event.abstract_local),
+        "abstract_source": event.abstract_source,
+        "days_left": event.seconds_left // DAY,
+        "seconds_left": event.seconds_left,
+        "comment": event.comment,
+        "event_date": event.event_date,
+        "place": event.place,
+        "link": event.link,
+    }
+
+
+def tbd_to_json(entry: TbdEntry) -> dict[str, Any]:
+    return {
+        "conference_key": entry.conference_key,
+        "conference": entry.conference,
+        "year": entry.year,
+        "ccf_rank": entry.ccf_rank,
+        "event_date": entry.event_date,
+        "place": entry.place,
+        "link": entry.link,
+    }
+
+
+def build_json_payload(
+    *,
+    args: argparse.Namespace,
+    fetched_at: datetime,
+    display_tz: tzinfo,
+    tz_label: str,
+    category: Optional[str],
+    tracked: int,
+    events: list[Event],
+    tbd: list[TbdEntry],
+    now_utc: datetime,
+) -> dict[str, Any]:
+    return {
+        "source": DATA_URL,
+        "fetched_at": isoformat_seconds(fetched_at),
+        "display_timezone": tz_label,
+        "category": "all" if category is None else category,
+        "now_utc": isoformat_seconds(now_utc),
+        "filters": {
+            "days": args.days,
+            "ranks": args.rank if args.rank else None,
+            "limit": args.limit,
+            "all_kinds": bool(args.all_kinds),
+        },
+        "tracked_series": tracked,
+        "events": [event_to_json(event) for event in events],
+        "tbd": [tbd_to_json(entry) for entry in tbd],
+    }
+
+
+# ---------------------------------------------------------------------------
+# Details view
+# ---------------------------------------------------------------------------
+
+
+def latest_edition(series: dict) -> Optional[dict]:
+    editions = [edition for edition in series.get("confs") or [] if isinstance(edition, dict)]
+    if not editions:
+        return None
+
+    def sort_key(edition: dict) -> tuple[int, str]:
+        try:
+            year = int(edition.get("year"))
+        except (TypeError, ValueError):
+            year = 0
+        return year, str(edition.get("id") or "")
+
+    return max(editions, key=sort_key)
+
+
+def matched_series(catalog: list[dict], query: str, category: Optional[str]) -> list[dict]:
+    needle = query.casefold()
+    matches: list[dict] = []
+    for series in catalog:
+        if category is not None and str(series.get("sub") or "").casefold() != category.casefold():
+            continue
+        haystacks = (
+            str(series.get("title") or ""),
+            str(series.get("conference_key") or ""),
+            str(series.get("description") or ""),
+        )
+        if any(needle in haystack.casefold() for haystack in haystacks):
+            matches.append(series)
+    matches.sort(
+        key=lambda series: (
+            str(series.get("title") or "").casefold(),
+            str(series.get("conference_key") or ""),
+        )
+    )
+    return matches
+
+
+def details_series_json(series: dict, *, now_utc: datetime, display_tz: tzinfo) -> dict[str, Any]:
+    conf = latest_edition(series)
+    rank = series.get("rank") or {}
+    timeline: list[dict[str, Any]] = []
+    if conf is not None:
+        zone = parse_source_timezone(conf.get("timezone"))
+        for entry in conf.get("timeline") or []:
+            if not isinstance(entry, dict):
+                continue
+            for field_name in ALL_KINDS:
+                raw = entry.get(field_name)
+                naive, status = parse_deadline(raw)
+                if status == "absent":
+                    continue
+                row: dict[str, Any] = {
+                    "kind": field_name,
+                    "kind_label": KIND_LABELS.get(field_name, field_name),
+                    "deadline_source": None if raw is None else str(raw).strip(),
+                    "source_timezone": None if zone is None else zone.label,
+                    "status": status,
+                    "deadline_utc": None,
+                    "deadline_local": None,
+                    "passed": None,
+                    "comment": str(entry.get("comment") or "").strip(),
+                }
+                if naive is not None and zone is not None:
+                    utc = naive.replace(tzinfo=zone.tz).astimezone(timezone.utc)
+                    row["deadline_utc"] = isoformat_seconds(utc)
+                    row["deadline_local"] = isoformat_seconds(utc.astimezone(display_tz))
+                    row["passed"] = utc <= now_utc
+                timeline.append(row)
+    return {
+        "conference_key": str(series.get("conference_key") or ""),
+        "conference": str(series.get("title") or ""),
+        "description": str(series.get("description") or ""),
+        "area": str(series.get("sub") or ""),
+        "ranks": {
+            "ccf": rank.get("ccf"),
+            "core": rank.get("core"),
+            "thcpl": rank.get("thcpl"),
+        },
+        "link": str((conf or {}).get("link") or ""),
+        "event_date": str((conf or {}).get("date") or ""),
+        "place": str((conf or {}).get("place") or ""),
+        "edition_year": (conf or {}).get("year"),
+        "source_timezone": None if conf is None else conf.get("timezone"),
+        "timeline": timeline,
+    }
+
+
+def render_details(
+    matches: list[dict],
+    *,
+    query: str,
+    now_utc: datetime,
+    display_tz: tzinfo,
+    tz_label: str,
+    colors: bool,
+) -> list[str]:
+    lines: list[str] = [
+        paint(f"CCFDDL details for {query!r} — {len(matches)} matching series", BOLD, colors)
+    ]
+    for index, series in enumerate(matches):
+        if index:
+            lines.append("")
+        conf = latest_edition(series)
+        rank = series.get("rank") or {}
+        lines.append(paint(str(series.get("title") or ""), BOLD_CYAN, colors))
+        lines.append(f"  conference_key : {series.get('conference_key') or DASH}")
+        lines.append(f"  description    : {series.get('description') or DASH}")
+        lines.append(f"  area           : {series.get('sub') or DASH}")
+        lines.append(
+            "  ranks          : "
+            f"CCF {rank.get('ccf') or DASH} · CORE {rank.get('core') or DASH} · "
+            f"THCPL {rank.get('thcpl') or DASH}"
+        )
+        if conf is None:
+            lines.append("  latest edition : (none in catalog)")
+            continue
+        lines.append(
+            "  edition        : "
+            f"{conf.get('year')} ({conf.get('id') or DASH}) "
+            f"· source tz {conf.get('timezone') or DASH}"
+        )
+        lines.append(f"  event date     : {conf.get('date') or DASH}")
+        lines.append(f"  place          : {conf.get('place') or DASH}")
+        lines.append(f"  official link  : {conf.get('link') or DASH}")
+        zone = parse_source_timezone(conf.get("timezone"))
+        lines.append("")
+        lines.append(
+            paint(
+                f"  latest-edition timeline (source → {tz_label}); PASSED = already past",
+                DIM,
+                colors,
+            )
+        )
+        if zone is None:
+            lines.append("    no recognized source timezone; cannot convert safely")
+            continue
+        timeline = [entry for entry in (conf.get("timeline") or []) if isinstance(entry, dict)]
+        if not timeline:
+            lines.append("    (no timeline entries in catalog)")
+        for entry in timeline:
+            comment = str(entry.get("comment") or "").strip()
+            for field_name in ALL_KINDS:
+                raw = entry.get(field_name)
+                naive, status = parse_deadline(raw)
+                if status == "absent":
+                    continue
+                label = f"{KIND_LABELS.get(field_name, field_name).upper():<9}"
+                if status == "tbd":
+                    rendered = f"{label} TBD (not announced)"
+                elif naive is None:
+                    rendered = f"{label} {raw!r} (unparsable, skipped)"
+                else:
+                    utc = naive.replace(tzinfo=zone.tz).astimezone(timezone.utc)
+                    local = utc.astimezone(display_tz)
+                    state = "  PASSED" if utc <= now_utc else ""
+                    rendered = (
+                        f"{label} {str(raw).strip()} {zone.label}"
+                        f"  →  {local.strftime('%Y-%m-%d %H:%M:%S')} {format_offset_seconds(local)}"
+                        f"{state}"
+                    )
+                if comment:
+                    rendered += f"  [{comment}]"
+                lines.append("    " + rendered)
+    return lines
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="ccfddl",
+        description=(
+            "Live CCF conference deadline viewer. Fetches the public CCFDDL catalog on every "
+            "run and shows upcoming paper submission deadlines converted to your timezone. "
+            "Nothing is hardcoded; TBD means the venue has not announced a date yet."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "examples:\n"
+            "  %(prog)s                         all upcoming paper deadlines for the default area\n"
+            "  %(prog)s --days 30                only deadlines in the next 30 days\n"
+            "  %(prog)s --rank A --limit 10      first 10 CCF-A deadlines\n"
+            "  %(prog)s --category all           every research area in the catalog\n"
+            "  %(prog)s --tz UTC                 display deadline instants in UTC\n"
+            "  %(prog)s --details <name>         full timeline for matching series\n"
+            "  %(prog)s --include-tbd            also list series whose deadline is not announced\n"
+            "  %(prog)s --json                   machine-readable output (audit fields included)\n"
+            "\nData: " + DATA_URL + "\n"
+            "Times are timezone-corrected (AoE=UTC-12; PT is DST-aware).\n"
+            "Always verify a deadline on the official venue page before submitting."
+        ),
+    )
+    parser.add_argument(
+        "-d",
+        "--days",
+        type=nonnegative_int,
+        default=0,
+        metavar="N",
+        help="only show deadlines within the next N days (default: 0 = all upcoming)",
+    )
+    parser.add_argument(
+        "-r",
+        "--rank",
+        type=rank_list,
+        default=None,
+        metavar="LIST",
+        help="comma-separated CCF rank filter, subset of A,B,C,N (default: all)",
+    )
+    parser.add_argument(
+        "-c",
+        "--category",
+        default=None,
+        metavar="CODE",
+        help="research area code from the catalog, case-insensitive (default: AI; 'all' = every area)",
+    )
+    parser.add_argument(
+        "--tz",
+        type=validate_display_tz,
+        default=None,
+        metavar="TZ",
+        help="display timezone: IANA name such as Asia/Shanghai, America/Los_Angeles, or UTC "
+        "(default: system local timezone)",
+    )
+    parser.add_argument(
+        "-i",
+        "--details",
+        default=None,
+        metavar="QUERY",
+        help="case-insensitive substring of series title / conference_key / description; "
+        "show a per-series detail view instead of the table",
+    )
+    parser.add_argument(
+        "-j",
+        "--json",
+        action="store_true",
+        help="machine-readable JSON on stdout (no table, no ANSI colour)",
+    )
+    parser.add_argument(
+        "--limit",
+        type=nonnegative_int,
+        default=0,
+        metavar="N",
+        help="maximum number of table rows (default: 0 = no limit)",
+    )
+    parser.add_argument(
+        "--include-tbd",
+        action="store_true",
+        help="append a separate section listing series whose deadline is not announced yet",
+    )
+    parser.add_argument(
+        "--all-kinds",
+        action="store_true",
+        help="also show abstract / rebuttal / decision timeline entries (default: paper only)",
+    )
+    parser.add_argument(
+        "--data-file",
+        default=None,
+        metavar="PATH",
+        help="read catalog JSON from a local file instead of the network ('-' = stdin)",
+    )
+    parser.add_argument(
+        "--timeout",
+        type=positive_float,
+        default=DEFAULT_TIMEOUT,
+        metavar="SECS",
+        help=f"network timeout in seconds (default: {DEFAULT_TIMEOUT:g})",
+    )
+    parser.add_argument(
+        "--no-color",
+        action="store_true",
+        help="disable ANSI colour (also honours NO_COLOR; auto-disabled when stdout is not a TTY)",
+    )
+    parser.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="also print the footer: data source, fetch time, counts and the accuracy caveat "
+        "(quiet by default)",
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {VERSION}",
+        help="print version and exit",
+    )
+    return parser
+
+
+def main(argv: Optional[list[str]] = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    try:
+        exit_code = run(args)
+        sys.stdout.flush()
+        return exit_code
+    except CliError as exc:
+        print(f"ccfddl: error: {exc.message}", file=sys.stderr)
+        return exc.code
+    except BrokenPipeError:
+        # Downstream closed the pipe (for example `| head`): exit quietly and
+        # stop Python from flushing into the broken pipe during shutdown.
+        try:
+            devnull = os.open(os.devnull, os.O_WRONLY)
+            os.dup2(devnull, sys.stdout.fileno())
+        except OSError:
+            pass
+        return 0
+    except KeyboardInterrupt:
+        print("ccfddl: interrupted", file=sys.stderr)
+        return 130
+
+
+def run(args: argparse.Namespace) -> int:
+    if args.tz is not None:
+        display_tz_label, display_tz = args.tz, ZoneInfo(args.tz)
+    else:
+        display_tz_label, display_tz = detect_system_timezone()
+
+    now_utc = datetime.now(timezone.utc).replace(microsecond=0)
+    term_width = terminal_width()
+    catalog, fetched_at, origin = read_catalog(args, now_utc)
+    warnings = Warnings()
+
+    # --details searches the whole catalog unless the user constrained the area.
+    if args.details is not None:
+        query = args.details.strip()
+        if not query:
+            raise UsageError("--details requires a non-empty query")
+        details_category = resolve_category(catalog, args.category) if args.category is not None else None
+        matches = matched_series(catalog, query, details_category)
+        if args.json:
+            payload = {
+                "source": DATA_URL,
+                "fetched_at": isoformat_seconds(fetched_at),
+                "display_timezone": display_tz_label,
+                "now_utc": isoformat_seconds(now_utc),
+                "query": query,
+                "matches": [
+                    details_series_json(series, now_utc=now_utc, display_tz=display_tz)
+                    for series in matches
+                ],
+            }
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
+            return 0
+        if not matches:
+            print(f"ccfddl: no series matched {query!r}", file=sys.stderr)
+            print(
+                "hint: matching is a case-insensitive substring of title, conference_key or "
+                "description; try a shorter query."
+            )
+            return 0
+        detail_lines: list[str] = []
+        for line in render_details(
+            matches,
+            query=query,
+            now_utc=now_utc,
+            display_tz=display_tz,
+            tz_label=display_tz_label,
+            colors=False,
+        ):
+            detail_lines.extend(wrap_display_line(line, term_width))
+        print("\n".join(detail_lines))
+        return 0
+
+    category = resolve_category(catalog, args.category)
+    events, tracked = build_events(
+        catalog,
+        category=category,
+        ranks=args.rank,
+        now_utc=now_utc,
+        display_tz=display_tz,
+        all_kinds=bool(args.all_kinds),
+        warnings=warnings,
+    )
+    events = filter_events(events, days=args.days, now_utc=now_utc)
+    tbd = build_tbd(
+        catalog,
+        category=category,
+        ranks=args.rank,
+        now_utc=now_utc,
+        display_tz=display_tz,
+    )
+    matched = len(events)
+    events, _hidden = apply_limit(events, args.limit)
+
+    for line in warnings.lines():
+        print(f"ccfddl: warning: {line}", file=sys.stderr)
+
+    if args.json:
+        payload = build_json_payload(
+            args=args,
+            fetched_at=fetched_at,
+            display_tz=display_tz,
+            tz_label=display_tz_label,
+            category=category,
+            tracked=tracked,
+            events=events,
+            tbd=tbd,
+            now_utc=now_utc,
+        )
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 0
+
+    colors = colors_enabled(args)
+    title = title_line(category, args.rank, args.days)
+    rendered_title = title_lines(title, term_width, colors)
+
+    if not events:
+        for line in rendered_title:
+            print(line)
+        print("")
+        print(
+            f"No upcoming {category_label(category)} "
+            f"{'timeline' if args.all_kinds else 'paper'} deadlines match the current filters."
+        )
+        if args.verbose:
+            for line in footer_lines(
+                args=args,
+                fetched_at=fetched_at,
+                origin=origin,
+                display_tz=display_tz,
+                tz_label=display_tz_label,
+                category=category,
+                tracked=tracked,
+                shown=0,
+                matched=matched,
+                tbd_count=len(tbd),
+                all_kinds=bool(args.all_kinds),
+                term_width=term_width,
+            ):
+                print(line)
+        if args.include_tbd:
+            for line in tbd_lines(tbd, term_width=term_width, colors=colors):
+                print(line)
+        return 0
+
+    layout = compute_layout(
+        events,
+        term_width=term_width,
+        all_kinds=bool(args.all_kinds),
+        tz_label=display_tz_label,
+    )
+
+    use_rich = sys.stdout.isatty() and rich_available()
+    for line in rendered_title:
+        print(line)
+    print("")
+    if use_rich:
+        try:
+            lines = rich_table_lines(
+                events,
+                layout=layout,
+                tz_label=display_tz_label,
+                colors=colors,
+                all_kinds=bool(args.all_kinds),
+            )
+        except Exception:
+            lines = table_lines(
+                events,
+                layout=layout,
+                tz_label=display_tz_label,
+                colors=colors,
+                all_kinds=bool(args.all_kinds),
+            )
+    else:
+        lines = table_lines(
+            events,
+            layout=layout,
+            tz_label=display_tz_label,
+            colors=colors,
+            all_kinds=bool(args.all_kinds),
+        )
+    for line in lines:
+        print(line)
+
+    if args.verbose:
+        print("")
+        for line in footer_lines(
+            args=args,
+            fetched_at=fetched_at,
+            origin=origin,
+            display_tz=display_tz,
+            tz_label=display_tz_label,
+            category=category,
+            tracked=tracked,
+            shown=len(events),
+            matched=matched,
+            tbd_count=len(tbd),
+            all_kinds=bool(args.all_kinds),
+            term_width=term_width,
+        ):
+            print(line)
+
+    if args.include_tbd:
+        for line in tbd_lines(tbd, term_width=term_width, colors=colors):
+            print(line)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

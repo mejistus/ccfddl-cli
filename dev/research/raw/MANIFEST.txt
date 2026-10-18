@@ -1,0 +1,19 @@
+# Raw snapshot manifest — generated 2026-10-18T07:58:55Z by source-scout
+# sha256  bytes  file
+52b5ceaa247b251fbee869457a6365c68e545fe4a8156c069e32f095ebfd55ac      1077  raw/allconf.headers
+19ad4305b5d80c5ea599d320bee33bd09b537c1000f5c8fd4d522c359ca88879    777074  raw/allconf.json
+36ce353f5d4e1d196de89448600121f152b6984f1d40d9ff2be996d4856987ad        21  raw/fetched_at_utc.txt
+b92913c8cf428f378f113eb8d42cf69340fc0887dcf578cc9d69feb23067f87c      6057  raw/llms.txt
+140f4a8bc17e9d2022a59a9bb8fee795346a09428f8891e76372b61b55302f1c    224786  raw/secondary/allacc.json
+4f38621efde8d2a391185417a1d6af4060e24f07ad3106a80550f4444a3bf468   3007425  raw/secondary/deadlines_en.ics
+c977b4b12e0b3f6abdbe0c72f44f9c8fd5a36b0049c91c6d0ad6c9fa9cf8016e   2481757  raw/secondary/deadlines_en.xml
+b39a04ab61c087173f8d02e55545bba8ae0ff574fc6cd985ef1358f77194ad9b      4868  raw/secondary/root.html
+9eadedbf32355f767639cfddb375a1e734aa5b323ef3e9686a42d10ee55686ab     18524  raw/site/aaai-2027.html
+be8fb59e34687a53f80ef9e3138f8157cf426c89630eeaa1b5e773bb311a6a43      1023  raw/site/ai_index.headers
+74c71c363188ce8468cb04cb1766953ff377adeb5183537dc7309631a435e76a     37650  raw/site/ai_index.html
+906bebbed58ad6eb0b749020c28dfaee46cfac9e5805e5831ebc8a6bd85e6e18     18702  raw/site/coling-2027.html
+810e7be644ff50397ac94065f4a960eca48f15699ac369a20ce40dd09c8da45d     15957  raw/site/colt-2027.html
+5c209f8400b762eafd1001248a3553f1248abf3b651014e213e6e80ed322e5e4     18665  raw/site/cvpr-2027.html
+be9720964ad0d7fe73f22669f3cc348b24ae84988c50ff7babed90e83e6b1ec6     17535  raw/site/esann-2027.html
+60232e3200f70bf3fdf0cd4384f5e729f993820f8f0eef39e44da48713d829cd     18655  raw/site/icaps-2027.html
+78615394d5735fded1bcb5f7e58345c9d95fa933108f0251d47464e49c7f4c67     15902  raw/site/iccv-2027.html
