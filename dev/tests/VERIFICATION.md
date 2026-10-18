@@ -410,10 +410,16 @@ sections above now live under `dev/` (e.g. `dev/tests/test_ccfddl.py`).
 | Artifact | Bytes | sha256 | mtime |
 |---|---|---|---|
 | `./ccfddl` (v2.1.0) | 62 786 | `a5680f2471900ddd307473feeaa28919ca2875b33a6922313cbc33e9d5e291a5` | 2026-10-18 16:36 |
-| `README.md` (repo root) | 17 289 | `b2122b1b3281ab62568784d09477c864d201c646fa5c4da9e952fe0b4528b01c` | 2026-10-18 16:37 |
+| `README.md` (repo root) | 17 355 | `b8fbefeb2eee6430e2cb9ded63f4529615a58c6f7d597db0aa03bcddfd0cd01c` | 2026-10-18 16:54 (post-addendum install-wording fix) |
 | `dev/SPEC.md` | 17 483 | `9db12176021f2b91308414d5876938523af971b2354ee3ef474d440f6da75ea7` | 2026-10-18 16:37 |
-| `dev/tests/test_ccfddl.py` | 64 810 | `f70b8c4575bb7472d38df6587e4f552663caf773f7aef5846186de132ef75413` | 2026-10-18 16:38 |
+| `dev/tests/test_ccfddl.py` | 64 846 | `f814589f1f951a26e1b04fc9a2a5482181c6c8f67227f0f2afa099132436321a` | 2026-10-18 16:54 (post-addendum `-v` limit-zero fix) |
 | `dev/tests/oracle_live.py` | 15 455 | `2b1f95c8a2336e3ef12634f036a4b7cad3c87e6fd0d3f632c2e36a86f9beeb5b` | unchanged |
+
+**Post-addendum nits (docs/test-only):** both non-blocking items listed under
+“Test-edit review” were fixed after this addendum was first written — the README install
+text no longer says `cd tools`, and `test_limit_zero_means_no_limit` now runs with `-v`;
+the full suite was re-run on the current tree: **76/76 passed** (27.89 s), and
+`./ccfddl` is unchanged (`a5680f24…`).
 
 Fresh catalog re-fetch 2026-10-18T08:39:49Z: 777,074 B, sha256
 `19ad4305b5d80c5ea599d320bee33bd09b537c1000f5c8fd4d522c359ca88879` — **identical to the
@@ -425,7 +431,8 @@ re-verification.
 Commands: `python3 -m pytest dev/tests/test_ccfddl.py -q`; direct `./ccfddl` /
 `./ccfddl -v` / `./ccfddl --verbose` / `./ccfddl --json` from repo root, plus pty runs.
 
-* **Full suite: `76 passed in 25.84s`** (no skips, no failures).
+* **Full suite: `76 passed in 25.84s`** (no skips, no failures); re-run after the
+  post-addendum docs/test fixes: **76 passed in 27.89s**.
 * **Quiet default:** `./ccfddl` prints exactly 24 lines (title + blank + header + rule +
   20 rows); contains **no** `source`, `fetched`, `showing`, `caveat`, `series tracked`,
   `official`, URL or TBD-hint text. Same under a real pty (TTY). A 0-row run
@@ -469,16 +476,13 @@ untouched; the footer split is sound (default test asserts footer **absence** an
 checks headers/rows/local times; `test_verbose_shows_footer` asserts source URL, caveat,
 tracked count and shown count); the path fallbacks (`ROOT/ccfddl` → `ROOT.parent/ccfddl`,
 same for README) resolve correctly in the new layout and still work for the old one —
-verified by the 76/76 pass. Flagged, non-blocking:
+verified by the 76/76 pass. The two items flagged when this addendum was first written
+are **both resolved post-addendum** (see also the “Post-addendum nits” note above):
 
-1. **Coverage regression (test-only):** `test_limit_zero_means_no_limit` still runs
-   **without `-v`**, so its “no 'more' note” assertion is now trivially true (the count
-   only exists in the `-v` footer). Behaviour itself is correct — `--limit 0` with `-v`
-   prints no limit line — but the test no longer proves it. Recommend adding `-v` to that
-   test.
-2. **Docs-only publication nit:** `README.md` install section still says `cd tools` while
-   the published repo will be `ccfddl-cli`; harmless, but a one-word fix would avoid
-   confusing public readers.
+1. ~~Coverage regression (test-only)~~ — `test_limit_zero_means_no_limit` now passes
+   `-v`, so its “no 'more' note” assertion is meaningful again; suite still 76/76.
+2. ~~Docs-only publication nit~~ — README install section now reads “from the repository
+   root (or after copying ccfddl anywhere on your PATH)” instead of `cd tools`.
 
 ## Verdict on re-verification
 
@@ -488,8 +492,9 @@ verified by the 76/76 pass. Flagged, non-blocking:
 now correctly in `-v` footer per updated SPEC/README); §7.5 PASS (no stale fallback);
 §7.6 PASS (quiet default with no footer, complete `-v` footer, 80/120 widths, no ANSI);
 §7.7 PASS (README/SPEC now consistently document quiet default + `-v`; examples and flag
-table match actual output). Two non-blocking observations above; **no accuracy or
-specification defect found**, no changes made outside `dev/tests/VERIFICATION.md`.
+table match actual output). Both previously flagged non-blocking observations are now
+resolved (docs/test-only); **no accuracy or specification defect found**, no changes made
+outside `dev/tests/VERIFICATION.md`.
 
 ## Residual risks (v2.1.0)
 
@@ -503,6 +508,5 @@ specification defect found**, no changes made outside `dev/tests/VERIFICATION.md
    no such files exist in this repo state.
 4. Network/tzdata availability, exotic terminal widths, future tzdata DST-rule changes:
    unchanged from the original verification (§7 residual risks above).
-5. `test_limit_zero_means_no_limit` coverage gap is test-only; cannot mask an accuracy
-   defect in the CLI (the limit count is separately exercised with `-v` in
-   `test_limit_table_cuts_and_notes_more`).
+5. ~~`test_limit_zero_means_no_limit` coverage gap~~ — resolved; the test now runs with
+   `-v` and the suite passes 76/76.
